@@ -1,21 +1,38 @@
 import * as esbuild from 'esbuild'
 import { readFile } from 'fs/promises';
+import * as path from 'path';
+
+const cssResolvePlugin = {
+    name: 'cssresolve',
+    setup(build) {
+        build.onResolve({ filter: /.*/ }, args => {
+            if (args.kind == 'url-token')
+                return { path: path.join(args.resolveDir, args.path) , namespace: 'cssresolveNS' }
+            return null;
+        })
+
+        build.onLoad({ filter: /.*/, namespace: 'cssresolveNS' }, async args => {
+            const css = await readFile(args.path, 'utf8');
+            return { contents:css, loader: 'base64' };
+        })
+    }
+}
 
 const cssConstructStylesheetPlugin = {
     name: 'css imports',
     setup(build) {
         build.onLoad({ filter: /\.css$/ }, async (args) => {
             if (args.with.type === 'css') {
-                const css = await readFile(args.path, 'utf8');
-                let fixedCss = css.replaceAll('`', '\\`').replaceAll(/\\(?:[1-7][0-7]{0,2}|[0-7]{2,3})/gm, '${\'\\$&\'}');
-                
-                fixedCss = (await esbuild.transform(fixedCss, {
-                    loader: 'css',
+                const result = await esbuild.build({
+                    bundle: true,
+                    entryPoints: [args.path],
                     minify: build.initialOptions.minify,
-                })).code;
+                    plugins: [cssResolvePlugin],
+                    write: false
+                });
                 const contents = `
         const styles = new CSSStyleSheet();
-        styles.replaceSync(\`${fixedCss}\`);
+        styles.replaceSync(\`${result.outputFiles[0].text}\`);
         export default styles;`;
                 return { contents, loader: 'js' };
             }
